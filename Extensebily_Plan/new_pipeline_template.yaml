@@ -1,0 +1,42 @@
+# templates/new-pipeline-template.yaml
+name: "{{ pipeline_name }}"
+description: "{{ description }}"
+
+# Required sections (Automated Validation)
+required_sections:
+  - metadata
+  - spec.sources
+  - spec.outputs
+  - spec.iam
+
+# Job templates (Pre-defined)
+job_templates:
+  athena-query:
+    type: "glue-job"
+    script: "s3://pipeline-templates/athena-query.py"
+    config:
+      queryFile: "{{ query_path }}"
+      outputLocation: "{{ output_path }}"
+      
+  s3-processor:
+    type: "lambda"
+    runtime: "python3.9"
+    handler: "s3_processor.lambda_handler"
+    timeout: 300
+    
+  data-validation:
+    type: "glue-job"
+    script: "s3://pipeline-templates/data-validation.py"
+    dependencies: ["{{ previous_step }}"]
+    
+# Default monitoring set up
+default_monitoring:
+  cloudwatch:
+    metrics:
+      - "Duration"
+      - "RecordsProcessed"
+      - "SuccessRate"
+    alarms:
+      - metric: "Duration"
+        threshold: "> 1 hour"
+        severity: "warning"

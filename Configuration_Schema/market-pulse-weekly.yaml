@@ -1,0 +1,118 @@
+# YAML configuration schema for pipeline market-pulse-weekly, type trigger Scheduler
+
+# pipeline-config-schema.yaml
+apiVersion: data-pipeline/v1
+kind: Pipeline
+metadata:
+  name: "market-pulse-weekly"
+  description: "Generates market pulse extracts for configured clients"
+  owner: "data-engineering-team"
+  team: "analytics"
+  tags:
+    - market-data
+    - client-reporting
+    - weekly
+
+spec:
+  # --- Scheduling & Triggers ---
+  schedule:
+    type: "cron"
+    expression: "0 5 ? * TUE *"
+    timezone: "UTC"
+  
+  triggers:
+    - type: "scheduled"
+    - type: "manual"
+    - type: "event"
+      eventSource: "s3:ObjectCreated:*"
+      eventPattern: "arn:aws:s3:::trovo-coop-data-copy/weekly_configs/*.json"
+
+  # --- Execution Environment ---
+  execution:
+    engine: "aws-glue"
+    region: "us-west-2"
+    runtime: "glue-4.0"
+    workerType: "G.1X"
+    numberOfWorkers: 10
+    timeoutMinutes: 120
+
+  # --- Data Sources ---
+  sources:
+    - id: "market-pulse-view"
+      type: "athena-table"
+      location: "trovo_coop_v2_market_pulse_data_view"
+      database: "analytics_db"
+      freshnessThreshold: "24h"  # Alert if > 24h without update
+      schemaVersion: "v2"
+      
+    - id: "universal-person"
+      type: "athena-table"
+      location: "5x5_universal_person"
+      database: "identity_db"
+      owner: "identity-team"
+
+  # --- Processing Steps ---
+  jobs:
+    - id: "data-extraction"
+      name: "market_pulse_extract_weekly"
+      type: "glue-job"
+      scriptLocation: "s3://data-pipeline-scripts/glue/market-pulse-extract.py"
+      dependencies: []
+      config:
+        outputFormat: "csv"
+        compression: "gzip"
+        partitions: ["year", "month", "day", "client_id"]
+
+    - id: "email-validation"
+      name: "market_pulse_email_validation"
+      type: "glue-job"
+      scriptLocation: "s3://data-pipeline-scripts/glue/email-validation.py"
+      dependencies: ["data-extraction"]
+      condition: "${client.validation_enabled == true}"
+      config:
+        validationRules: "s3://validation-rules/email-rules.json"
+
+  # --- Outputs & Delivery ---
+  outputs:
+    - type: "s3"
+      location: "s3://client-exports/market-pulse/weekly/"
+      namingPattern: "${client_id}/${year}/${month}/${day}/market_pulse_${timestamp}.csv.gz"
+      retentionDays: 90
+      
+    - type: "notification"
+      channel: "email"
+      template: "s3://email-templates/pipeline-completion.html"
+      recipients: "${client.contact_emails}"
+      condition: "${pipeline.status == 'SUCCEEDED'}"
+
+  # --- IAM & Security ---
+  iam:
+    role: "arn:aws:iam::123456789:role/data-pipeline-execution-role"
+    permissionsBoundary: "arn:aws:iam::123456789:policy/data-pipeline-boundary"
+    policies:
+      - "s3-read-trovo-coop"
+      - "athena-query-analytics"
+      - "glue-catalog-read"
+      
+  # --- Monitoring ---
+  monitoring:
+    cloudwatch:
+      alarms:
+        - metric: "ExecutionTime"
+          threshold: "7200"  # 2 hours in seconds
+          severity: "high"
+          
+        - metric: "SuccessRate"
+          threshold: "95"
+          severity: "medium"
+          
+    datadog:
+      tags: ["env:prod", "pipeline:market-pulse"]
+      
+  # --- Cost Controls ---
+  costControls:
+    maxCostPerRun: 50  # USD
+    budgetAlertThreshold: 80  # %
+    tags:
+      CostCenter: "data-engineering"
+      Project: "client-reporting"

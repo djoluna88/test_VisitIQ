@@ -1,0 +1,41 @@
+# YAML configuration schema for pipeline market-pulse-weekly, type trigger S3 Upload ---> Lambda, on demand frequency execution
+
+apiVersion: data-pipeline/v1
+kind: Pipeline
+metadata:
+  name: "vins-automotive"
+  description: "Process VIN file uploads from customers"
+  triggerType: "event-driven"
+
+spec:
+  triggers:
+    - type: "s3-event"
+      bucket: "customer-vin-uploads"
+      prefix: "incoming/"
+      suffix: ".csv"
+      eventTypes: ["s3:ObjectCreated:*"]
+      
+  execution:
+    engine: "step-functions"
+    stateMachine: "arn:aws:states:us-east-1:123456789012:stateMachine:vin-processing"
+    
+  workflow:
+    - name: "trigger-lambda"
+      type: "lambda"
+      function: "visitiq-vin-match-glue-workflow-trigger"
+      eventMapping: "s3-event-to-glue-params"
+      
+    - name: "pii-retrieval"
+      type: "glue-job"
+      dependsOn: ["trigger-lambda"]
+      condition: "${input.hasPii == true}"
+      
+    - name: "email-validation"
+      type: "glue-job"
+      dependsOn: ["pii-retrieval"]
+      
+    - name: "final-output"
+      type: "glue-job"
+      dependsOn: ["email-validation"]
+      outputs:
+        - location: "s3://processed-vins/${customer_id}/${date}/"

@@ -1,0 +1,38 @@
+{
+  "IAMStrategy": {
+    "principle": "least-privilege",
+    "layers": [
+      {
+        "layer": "PipelineOrchestrator",
+        "role": "pipeline-orchestrator-role",
+        "permissions": [
+          "states:StartExecution",      
+          "glue:StartJobRun",           
+          "lambda:InvokeFunction",
+          "events:PutRule"
+        ],
+        "assumableBy": ["airflow-service", "step-functions"]
+      },
+      {
+        "layer": "DataAccess",
+        "role": "data-access-role",
+        "permissions": [
+          "s3:GetObject",
+          "athena:StartQueryExecution",
+          "glue:GetTable"
+        ],
+        "conditions": {
+          "s3": {
+            "prefix": "data-pipelines/${pipeline-name}/*"
+          }
+        }
+      },
+      {
+        "layer": "PipelineExecution",
+        "role": "pipeline-execution-role-${pipeline-name}",
+        "permissions": "dynamically-generated",
+        "boundary": "pipeline-permissions-boundary"
+      }
+    ]
+  }
+}

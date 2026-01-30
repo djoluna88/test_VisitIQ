@@ -1,0 +1,42 @@
+# Combining AWS services for management sources where we have able AWS services and require an approach serverless. 
+# Hybrid Approach
+
+sources:
+  market_pulse_view:
+    metadata:
+      name: "Market Pulse Data View"
+      type: "athena_view"
+      owner: "analytics-team@company.com"
+      description: "Joined market transactions with client dimensions"
+      
+    technical:
+      location: "trovo_coop_v2_market_pulse_data_view"
+      database: "analytics_db"
+      format: "parquet"
+      partitions: ["year", "month", "day"]
+      
+    governance:
+      freshness_sla: "24h"
+      quality_rules:
+        - rule: "row_count > 1000"
+          severity: "warning"
+        - rule: "null_percentage(client_id) < 0.01"
+          severity: "error"
+      tags: ["confidential", "client-facing"]
+      
+    lineage:
+      upstream:
+        - "s3://raw-data/transactions/"
+        - "rds://prod/dim_clients"
+      downstream:
+        - "pipeline://market-pulse-weekly"
+        - "dashboard://sales-overview"
+        
+    monitoring:
+      cloudwatch_metrics:
+        - "DailyRecordCount"
+        - "NullPercentage"
+      alerts:
+        - metric: "DataFreshness"
+          threshold: "> 24h"
+          action: "arn:aws:sns:us-west-2:123456789012:data-alerts"
